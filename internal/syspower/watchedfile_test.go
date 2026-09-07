@@ -14,7 +14,7 @@ func TestWatchedFile(t *testing.T) {
 
 	isChanged := false
 
-	fw := NewWatchedFile(fileName, func(watchedFile *WatchedFile) {
+	fw := NewWatchedFile(fileName, func(oldValue, newValue string) {
 		isChanged = true
 	})
 

@@ -15,7 +15,7 @@ type WatchedFile struct {
 	mu       sync.RWMutex
 }
 
-type OnChange func(watchedFile *WatchedFile)
+type OnChange func(oldValue, newValue string)
 
 // Creates new watched file
 func NewWatchedFile(path string, onChange OnChange) *WatchedFile {
@@ -47,17 +47,18 @@ func (w *WatchedFile) readInternal(notify bool) error {
 		return fmt.Errorf("cannot open file %s: %w", w.path, err)
 	}
 
+	oldValue := w.value
 	currentValue := string(bytes.TrimSpace(data))
 	changed := false
 	w.mu.Lock()
-	if currentValue != w.value {
+	if currentValue != oldValue {
 		w.value = currentValue
 		changed = true
 	}
 	w.mu.Unlock()
 
 	if notify && changed && w.onChange != nil {
-		w.onChange(w)
+		w.onChange(oldValue, currentValue)
 	}
 
 	return nil
