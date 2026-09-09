@@ -12,11 +12,13 @@ type ControlSpec struct {
 }
 
 type Registry struct {
-	specs map[string]ControlSpec
+	specs       map[string]ControlSpec
+	cache       map[string]*SysFsVal
+	cachedNames []string
 }
 
 func NewRegistry() *Registry {
-	r := &Registry{specs: make(map[string]ControlSpec)}
+	r := &Registry{specs: make(map[string]ControlSpec), cache: make(map[string]*SysFsVal)}
 
 	r.specs["cpuboost"] = ControlSpec{
 		path:          "/sys/devices/system/cpu/cpufreq/boost",
@@ -41,20 +43,41 @@ func (r *Registry) Get(name string, onChange OnChange) (*SysFsVal, error) {
 		return nil, fmt.Errorf("control '%s' is not supported on this hardware (missing %s)", name, s.path)
 	}
 
+	if f, exists := r.cache[name]; exists {
+		return f, nil
+	}
+
 	watched := NewWatchedFile(s.path, onChange)
 
 	if s.choicesPath != func() string { return "" }() {
 		if _, err := os.Stat(s.choicesPath); err == nil {
-			return NewDynamicFsVal(watched, s.choicesPath)
+			if fsVal, err := NewDynamicFsVal(watched, s.choicesPath); err != nil {
+				return nil, err
+			} else {
+				r.cache[name] = fsVal
+				r.cachedNames = append(r.cachedNames, name)
+				return fsVal, nil
+			}
 		}
 	}
 
-	return NewStaticFsVal(watched, s.staticChoices), nil
+	fsVal := NewStaticFsVal(watched, s.staticChoices)
+	r.cachedNames = append(r.cachedNames, name)
+	r.cache[name] = fsVal
+	return fsVal, nil
 }
 
 func (r *Registry) List() []string {
 	var result []string
-	for name, _ := range r.specs {
+	for name := range r.specs {
+		result = append(result, name)
+	}
+	return result
+}
+
+func (r *Registry) ListCached() []string {
+	var result []string
+	for _, name := range r.cachedNames {
 		result = append(result, name)
 	}
 	return result

@@ -32,6 +32,8 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		printHelp()
 		return nil
+	case "tui", "-t", "--tui":
+		return runTui(registry)
 	case "list", "-l", "--list":
 		printTable(registry)
 		return nil
