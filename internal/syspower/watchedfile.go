@@ -69,7 +69,7 @@ func (w *WatchedFile) Write(value string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	file, err := os.OpenFile(w.path, os.O_WRONLY, 0)
+	file, err := os.OpenFile(w.path, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return fmt.Errorf("cannot open file %s: %w", w.path, err)
 	}
