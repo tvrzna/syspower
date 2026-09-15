@@ -43,7 +43,11 @@ func buildApp(registry *syspower.Registry) *TFrameWidget {
 			variables[target] = rv
 			for j, choice := range ctrl.Choices() {
 				radio := radioFrame.TRadiobutton(Txt(choice), rv, Value(choice), Command(func() {
-					ctrl.Set(rv.Get())
+					if err := ctrl.Set(rv.Get()); err != nil {
+						PostEvent(func() {
+							rv.Set(ctrl.Value())
+						}, false)
+					}
 				}))
 				Grid(radio, Row(0), Column(j), Padx(5), Pady(5), Sticky("nsew"))
 			}
