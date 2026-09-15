@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/tvrzna/syspower/internal/syspower"
 	. "modernc.org/tk9.0"
@@ -17,7 +16,7 @@ func main() {
 
 	registry := syspower.NewRegistry()
 	Pack(buildApp(registry))
-	go checkContent(registry)
+	go registry.WatchChanges()
 	ActivateTheme("azure dark")
 	App.WmTitle("syspower-gui")
 	App.Center().Wait()
@@ -55,20 +54,6 @@ func buildApp(registry *syspower.Registry) *TFrameWidget {
 	}
 
 	return r
-}
-
-func checkContent(registry *syspower.Registry) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		for _, name := range registry.ListCached() {
-			if ctrl, err := registry.Get(name, nil); err == nil {
-				ctrl.UpdateValue()
-			}
-		}
-	}
 }
 
 func processArgs(args []string) {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"time"
 
 	"github.com/tvrzna/syspower/internal/syspower"
 	"golang.org/x/term"
@@ -91,7 +90,7 @@ func runTui(registry *syspower.Registry) error {
 		})
 	}
 
-	go checkContent(registry)
+	go registry.WatchChanges()
 	go startKeyReader(keyChan)
 
 	for {
@@ -152,20 +151,6 @@ func doMovement(registry *syspower.Registry, selector *selector, keyAction keyAc
 		selector.lastErr = ctrl.Set(ctrl.Choices()[selector.x])
 		selector.updateScreen = false
 		ctrl.UpdateValue()
-	}
-}
-
-func checkContent(registry *syspower.Registry) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		for _, name := range registry.ListCached() {
-			if ctrl, err := registry.Get(name, nil); err == nil {
-				ctrl.UpdateValue()
-			}
-		}
 	}
 }
 

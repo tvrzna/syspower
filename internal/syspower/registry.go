@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"time"
 )
 
 type ControlSpec struct {
@@ -86,4 +87,19 @@ func (r *Registry) ListCached() []string {
 		result = append(result, name)
 	}
 	return result
+}
+
+// Watch periodically for changes.
+func (r *Registry) WatchChanges() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		for _, name := range r.ListCached() {
+			if ctrl, err := r.Get(name, nil); err == nil {
+				ctrl.UpdateValue()
+			}
+		}
+	}
 }
