@@ -3,6 +3,7 @@ package syspower
 import (
 	"fmt"
 	"os"
+	"slices"
 )
 
 type ControlSpec struct {
@@ -13,6 +14,7 @@ type ControlSpec struct {
 
 type Registry struct {
 	specs       map[string]ControlSpec
+	specsNames  []string
 	cache       map[string]*SysFsVal
 	cachedNames []string
 }
@@ -63,18 +65,21 @@ func (r *Registry) Get(name string, onChange OnChange) (*SysFsVal, error) {
 
 	fsVal := NewStaticFsVal(watched, s.staticChoices)
 	r.cachedNames = append(r.cachedNames, name)
+	slices.Sort(r.cachedNames)
 	r.cache[name] = fsVal
 	return fsVal, nil
 }
 
+// List all known control specification names.
 func (r *Registry) List() []string {
 	var result []string
-	for name := range r.specs {
+	for _, name := range r.specsNames {
 		result = append(result, name)
 	}
 	return result
 }
 
+// List all successfully cached control names.
 func (r *Registry) ListCached() []string {
 	var result []string
 	for _, name := range r.cachedNames {
