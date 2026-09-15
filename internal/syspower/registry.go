@@ -20,6 +20,7 @@ type Registry struct {
 	cachedNames []string
 }
 
+// Initializes new registry with predefined controls and their paths.
 func NewRegistry() *Registry {
 	r := &Registry{specs: make(map[string]ControlSpec), cache: make(map[string]*SysFsVal)}
 
@@ -33,9 +34,17 @@ func NewRegistry() *Registry {
 		choicesPath: "/sys/firmware/acpi/platform_profile_choices",
 	}
 
+	r.specsNames = make([]string, 0, len(r.specs))
+	for k := range r.specs {
+		r.specsNames = append(r.specsNames, k)
+	}
+	slices.Sort(r.specsNames)
+
 	return r
 }
 
+// Gets control from registry according its name.
+// If control is already initialized, it is returned from cache, otherwise it initialize a new one with onChange func.
 func (r *Registry) Get(name string, onChange OnChange) (*SysFsVal, error) {
 	s, exists := r.specs[name]
 	if !exists {

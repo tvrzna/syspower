@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"slices"
@@ -21,82 +22,41 @@ const (
 )
 
 type selector struct {
-	x, y         int
-	updateScreen bool
-	lastErr      error
-	statusMsg    string
-}
-
-func startKeyReader(keyChan chan<- keyAction) {
-	go func() {
-		buf := make([]byte, 3)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if err != nil {
-				keyChan <- QUIT
-			}
-
-			if n == 1 {
-				switch buf[0] {
-				case 'q', 3:
-					keyChan <- QUIT
-				case 'h':
-					keyChan <- LEFT
-				case 'j':
-					keyChan <- UP
-				case 'k':
-					keyChan <- DOWN
-				case 'l':
-					keyChan <- RIGHT
-				}
-			} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
-				switch buf[2] {
-				case 68:
-					keyChan <- LEFT
-				case 65:
-					keyChan <- UP
-				case 66:
-					keyChan <- DOWN
-				case 67:
-					keyChan <- RIGHT
-				}
-			}
-		}
-	}()
+	y          int
+	skipUpdate bool
+	statusMsg  string
 }
 
 func runTui(registry *syspower.Registry) error {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set raw terminal: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to set raw terminal: %v\n", err)
 	}
 	defer term.Restore(fd, oldState)
 
-	selector := &selector{-1, 0, true, nil, ""}
+	selector := &selector{y: 0}
 
 	keyChan := make(chan keyAction, 1)
 	updateChan := make(chan bool, 1)
 
 	for _, target := range registry.List() {
-		registry.Get(target, func(oldValue, newValue string) {
-			if !selector.updateScreen {
-				selector.updateScreen = true
-			} else {
+		targetName := target
+		registry.Get(targetName, func(oldValue, newValue string) {
+			if !selector.skipUpdate {
 				updateChan <- true
 			}
-			selector.statusMsg = fmt.Sprintf("%s: %s -> %s", target, oldValue, newValue)
+			selector.skipUpdate = false
+			selector.statusMsg = fmt.Sprintf(" Status: %s: %s -> %s", target, oldValue, newValue)
 		})
 	}
 
 	go registry.WatchChanges()
 	go startKeyReader(keyChan)
 
+	writer := bufio.NewWriter(os.Stdout)
 	for {
-		if err := printContent(registry, selector); err != nil {
-			return err
-		}
+		printContent(writer, registry, selector)
 
 		select {
 		case keyAction := <-keyChan:
@@ -110,59 +70,82 @@ func runTui(registry *syspower.Registry) error {
 	}
 }
 
-func doMovement(registry *syspower.Registry, selector *selector, keyAction keyAction) {
-	maxY := len(registry.ListCached())
-	if maxY > 0 {
-		maxY--
-	}
+func startKeyReader(keyChan chan<- keyAction) {
+	buf := make([]byte, 3)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			keyChan <- QUIT
+			return
+		}
 
-	target := registry.ListCached()[selector.y]
-	ctrl, err := registry.Get(target, nil)
-	if err != nil {
+		switch string(buf[:n]) {
+		case "q", "\x03":
+			keyChan <- QUIT
+		case "h", "\x1b[D":
+			keyChan <- LEFT
+		case "j", "\x1b[B":
+			keyChan <- DOWN
+		case "k", "\x1b[A":
+			keyChan <- UP
+		case "l", "\x1b[C":
+			keyChan <- RIGHT
+		}
+	}
+}
+
+func doMovement(registry *syspower.Registry, selector *selector, keyAction keyAction) {
+	list := registry.ListCached()
+	listLen := len(list)
+	if listLen == 0 {
 		return
 	}
-	maxX := len(ctrl.Choices()) - 1
-	selector.x = slices.Index(ctrl.Choices(), ctrl.Value())
 
 	switch keyAction {
 	case UP:
-		selector.y--
-		if selector.y < 0 {
-			selector.y = maxY
-		}
+		selector.y = (selector.y - 1 + listLen) % listLen
 	case DOWN:
-		selector.y++
-		if selector.y > maxY {
-			selector.y = 0
+		selector.y = (selector.y + 1) % listLen
+	case LEFT, RIGHT:
+		ctrl, err := registry.Get(list[selector.y], nil)
+		if err != nil {
+			return
 		}
-	case LEFT:
-		selector.x--
-		if selector.x < 0 {
-			selector.x = maxX
-		}
-	case RIGHT:
-		selector.x++
-		if selector.x > maxX {
-			selector.x = 0
-		}
-	}
 
-	if keyAction == LEFT || keyAction == RIGHT {
-		selector.lastErr = ctrl.Set(ctrl.Choices()[selector.x])
-		selector.updateScreen = false
+		choices := ctrl.Choices()
+		choicesLen := len(choices)
+		if choicesLen == 0 {
+			return
+		}
+
+		currIdx := slices.Index(choices, ctrl.Value())
+		if currIdx == -1 {
+			currIdx = 0
+		}
+
+		if keyAction == LEFT {
+			currIdx = (currIdx - 1 + choicesLen) % choicesLen
+		} else {
+			currIdx = (currIdx + 1) % choicesLen
+		}
+
+		if err := ctrl.Set(choices[currIdx]); err != nil {
+			selector.statusMsg = fmt.Sprintf(" Error: %v", err)
+		} else {
+			selector.skipUpdate = true
+		}
 		ctrl.UpdateValue()
 	}
 }
 
-func printContent(registry *syspower.Registry, selector *selector) error {
-	fmt.Print("\x1b[H\x1b[2J")
+func printContent(w *bufio.Writer, registry *syspower.Registry, selector *selector) {
+	w.WriteString("\x1b[H\x1b[2J")
+	w.WriteString("==========================================================================\r\n")
+	w.WriteString("  syspower - System power control utility\r\n")
+	w.WriteString("==========================================================================\r\n")
 
-	fmt.Print("==========================================================================\r\n")
-	fmt.Print("  syspower - System power control utility\r\n")
-	fmt.Print("==========================================================================\r\n")
-
-	fmt.Printf("   %-18s %-12s %s\r\n", "CONTROL", "VALUE", "CHOICES")
-	fmt.Printf("   %-18s %-12s %s\r\n", "-------", "-----", "-------")
+	fmt.Fprintf(w, "   %-18s %-12s %s\r\n", "CONTROL", "VALUE", "CHOICES")
+	fmt.Fprintf(w, "   %-18s %-12s %s\r\n", "-------", "-----", "-------")
 	for i, name := range registry.ListCached() {
 		selected := "  "
 		if i == selector.y {
@@ -173,21 +156,13 @@ func printContent(registry *syspower.Registry, selector *selector) error {
 		if err != nil {
 			continue
 		}
-		fmt.Printf("%s %-18s %-12s %s\r\n", selected, name, ctrl.Value(), stringifyChoices(ctrl.Choices(), ctrl.Value()))
+		fmt.Fprintf(w, "%s %-18s %-12s %s\r\n", selected, name, ctrl.Value(), stringifyChoices(ctrl.Choices(), ctrl.Value()))
 	}
 
-	statusMsg := ""
-	if selector.lastErr != nil {
-		statusMsg = fmt.Sprintf(" Error:  %v", selector.lastErr)
-		selector.lastErr = nil
-	} else if selector.statusMsg != "" {
-		statusMsg = fmt.Sprintf(" Status: %s", selector.statusMsg)
-		selector.statusMsg = ""
-	}
-	fmt.Print("--------------------------------------------------------------------------\r\n")
-	fmt.Printf("%s\r\n", statusMsg)
-	fmt.Print(" Keys:   [↑/↓][j/k] Select Row  |  [←/→][h/l] Change Option  |  [q] Quit\r\n")
-	fmt.Print("==========================================================================\r\n")
-
-	return nil
+	w.WriteString("--------------------------------------------------------------------------\r\n")
+	fmt.Fprintf(w, "%s\r\n", selector.statusMsg)
+	w.WriteString(" Keys:   [↑/↓][k/j] Select Row  |  [←/→][h/l] Change Option  |  [q] Quit\r\n")
+	w.WriteString("==========================================================================\r\n")
+	selector.statusMsg = ""
+	w.Flush()
 }
