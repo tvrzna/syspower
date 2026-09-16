@@ -13,101 +13,110 @@ import (
 type keyAction byte
 
 const (
-	UP keyAction = iota + 1
+	NONE keyAction = iota
+	UP
 	DOWN
 	LEFT
 	RIGHT
-	NONE
 	QUIT
 )
 
+type event struct {
+	action   keyAction
+	target   string
+	oldValue string
+	newValue string
+}
+
 type selector struct {
-	y          int
-	skipUpdate bool
-	statusMsg  string
+	y         int
+	statusMsg string
 }
 
 func runTui(registry *syspower.Registry) error {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		return fmt.Errorf("failed to set raw terminal: %v\n", err)
+		return fmt.Errorf("failed to set raw terminal: %w", err)
 	}
 	defer term.Restore(fd, oldState)
 
-	selector := &selector{y: 0}
-
-	keyChan := make(chan keyAction, 1)
-	updateChan := make(chan bool, 1)
+	eventChan := make(chan event, 16)
 
 	for _, target := range registry.List() {
 		targetName := target
 		registry.Get(targetName, func(oldValue, newValue string) {
-			if !selector.skipUpdate {
-				updateChan <- true
+			select {
+			case eventChan <- event{NONE, targetName, oldValue, newValue}:
+			default:
 			}
-			selector.skipUpdate = false
-			selector.statusMsg = fmt.Sprintf(" Status: %s: %s -> %s", target, oldValue, newValue)
 		})
 	}
 
 	go registry.WatchChanges()
-	go startKeyReader(keyChan)
+	go startKeyReader(eventChan)
 
+	sel := &selector{y: 0}
 	writer := bufio.NewWriter(os.Stdout)
 	for {
-		printContent(writer, registry, selector)
+		printContent(writer, registry, sel)
 
-		select {
-		case keyAction := <-keyChan:
-			if keyAction == QUIT {
-				return nil
+		e := <-eventChan
+		switch e.action {
+		case QUIT:
+			return nil
+		case NONE:
+			if e.target != "" {
+				sel.statusMsg = fmt.Sprintf(" Status: %s: %s -> %s", e.target, e.oldValue, e.newValue)
 			}
-			doMovement(registry, selector, keyAction)
-		case <-updateChan:
-			continue
+		default:
+			doMovement(registry, sel, e.action)
 		}
 	}
 }
 
-func startKeyReader(keyChan chan<- keyAction) {
+func startKeyReader(eventChan chan<- event) {
 	buf := make([]byte, 3)
 	for {
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
-			keyChan <- QUIT
+			eventChan <- event{action: QUIT}
 			return
 		}
 
+		var key keyAction
 		switch string(buf[:n]) {
 		case "q", "\x03":
-			keyChan <- QUIT
+			key = QUIT
 		case "h", "\x1b[D":
-			keyChan <- LEFT
+			key = LEFT
 		case "j", "\x1b[B":
-			keyChan <- DOWN
+			key = DOWN
 		case "k", "\x1b[A":
-			keyChan <- UP
+			key = UP
 		case "l", "\x1b[C":
-			keyChan <- RIGHT
+			key = RIGHT
+		default:
+			continue
 		}
+		eventChan <- event{action: key}
 	}
 }
 
-func doMovement(registry *syspower.Registry, selector *selector, keyAction keyAction) {
+func doMovement(registry *syspower.Registry, sel *selector, action keyAction) {
 	list := registry.ListCached()
 	listLen := len(list)
 	if listLen == 0 {
 		return
 	}
 
-	switch keyAction {
+	switch action {
 	case UP:
-		selector.y = (selector.y - 1 + listLen) % listLen
+		sel.y = (sel.y - 1 + listLen) % listLen
 	case DOWN:
-		selector.y = (selector.y + 1) % listLen
+		sel.y = (sel.y + 1) % listLen
 	case LEFT, RIGHT:
-		ctrl, err := registry.Get(list[selector.y], nil)
+		ctrl, err := registry.Get(list[sel.y], nil)
 		if err != nil {
 			return
 		}
@@ -123,22 +132,20 @@ func doMovement(registry *syspower.Registry, selector *selector, keyAction keyAc
 			currIdx = 0
 		}
 
-		if keyAction == LEFT {
+		if action == LEFT {
 			currIdx = (currIdx - 1 + choicesLen) % choicesLen
 		} else {
 			currIdx = (currIdx + 1) % choicesLen
 		}
 
 		if err := ctrl.Set(choices[currIdx]); err != nil {
-			selector.statusMsg = fmt.Sprintf(" Error: %v", err)
-		} else {
-			selector.skipUpdate = true
+			sel.statusMsg = fmt.Sprintf(" Error: %v", err)
 		}
 		ctrl.UpdateValue()
 	}
 }
 
-func printContent(w *bufio.Writer, registry *syspower.Registry, selector *selector) {
+func printContent(w *bufio.Writer, registry *syspower.Registry, sel *selector) {
 	w.WriteString("\x1b[H\x1b[2J")
 	w.WriteString("==========================================================================\r\n")
 	w.WriteString("  syspower - System power control utility\r\n")
@@ -148,7 +155,7 @@ func printContent(w *bufio.Writer, registry *syspower.Registry, selector *select
 	fmt.Fprintf(w, "   %-18s %-12s %s\r\n", "-------", "-----", "-------")
 	for i, name := range registry.ListCached() {
 		selected := "  "
-		if i == selector.y {
+		if i == sel.y {
 			selected = "->"
 		}
 
@@ -160,9 +167,9 @@ func printContent(w *bufio.Writer, registry *syspower.Registry, selector *select
 	}
 
 	w.WriteString("--------------------------------------------------------------------------\r\n")
-	fmt.Fprintf(w, "%s\r\n", selector.statusMsg)
+	fmt.Fprintf(w, "%s\r\n", sel.statusMsg)
 	w.WriteString(" Keys:   [↑/↓][k/j] Select Row  |  [←/→][h/l] Change Option  |  [q] Quit\r\n")
 	w.WriteString("==========================================================================\r\n")
-	selector.statusMsg = ""
+	sel.statusMsg = ""
 	w.Flush()
 }
