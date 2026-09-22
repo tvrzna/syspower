@@ -61,3 +61,9 @@ Launch the desktop UI to interactively select power profiles using radio buttons
 ```bash
 sudo ./dist/syspower-gui
 ```
+
+---
+
+## License
+
+MIT License
