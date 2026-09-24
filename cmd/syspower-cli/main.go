@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/tvrzna/syspower/internal/syspower"
+	"golang.org/x/term"
 )
 
 const cliVersion = "0.0.2"
@@ -18,8 +19,12 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		printHelp()
-		return nil
+		if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+			args = append(args, "tui")
+		} else {
+			printHelp()
+			return nil
+		}
 	}
 
 	registry := syspower.NewRegistry()
