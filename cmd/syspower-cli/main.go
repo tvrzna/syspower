@@ -27,7 +27,6 @@ func run(args []string) error {
 		}
 	}
 
-	registry := syspower.NewRegistry()
 	switch args[0] {
 	case "version", "-v", "--version":
 		fmt.Printf("syspower %s (cli %s)\nhttps://github.com/tvrzna/syspower\n\nReleased under the MIT License.\n", syspower.GetVersion(), cliVersion)
@@ -36,9 +35,9 @@ func run(args []string) error {
 		printHelp()
 		return nil
 	case "tui", "-t", "--tui":
-		return runTui(registry)
+		return runTui(syspower.NewRegistry())
 	}
-	return runCli(args, registry)
+	return runCli(args, syspower.NewRegistry())
 }
 
 func printHelp() {
